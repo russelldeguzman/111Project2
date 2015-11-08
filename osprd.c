@@ -129,9 +129,9 @@ static void osprd_process_request(osprd_info_t *d, struct request *req)
 		memcpy(req->buffer, dataptr, req->current_nr_sectors * SECTOR_SIZE);
 	}
 	else{ // WRITE
-		memcpy(dataptr, req->buffer, req->current_nr_sector * SECTOR_SIZE);
+		memcpy(dataptr, req->buffer, req->current_nr_sectors * SECTOR_SIZE);
 	}
-	eprintk("Should process request...\n");
+	//eprintk("Should process request...\n");
 
 	end_request(req, 1);
 }
