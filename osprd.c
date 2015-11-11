@@ -67,6 +67,7 @@ typedef struct osprd_info {
 	unsigned * invalid_tickets;
 	int num_tickets;
 	int array_len;
+	pid_t write_pid;
 	// The following elements are used internally; you don't need
 	// to understand them.
 	struct request_queue *queue;    // The device request queue.
@@ -90,7 +91,7 @@ static int check_invalid(osprd_info_t *d){
 	}
 	return 0;
 }
-
+/*Expands the arary of invalid tickets */
 void expandarray(osprd_info_t *d){
 	d->array_len *=2;
 	unsigned *temp = kmalloc(sizeof(unsigned) * d->array_len,GFP_ATOMIC);
@@ -98,11 +99,14 @@ void expandarray(osprd_info_t *d){
 	kfree(d->invalid_tickets);
 	d->invalid_tickets = temp;		
 }
-
+/*clears a lock and wakes up the queue*/
 void clear(osprd_info_t *d,struct file *filp){
 	osp_spin_lock(&d->mutex);
 	int filp_writable = (filp->f_mode & FMODE_WRITE) != 0;
-	if(filp_writable) d->num_write_locks--;
+	if(filp_writable){
+		d->num_write_locks--;
+		d->write_pid = -1;
+	}
 	else d->num_read_locks--;
 	wake_up_all(&d->blockq);
 	filp->f_flags &= !F_OSPRD_LOCKED;
@@ -270,6 +274,7 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		// Your code here (instead of the next two lines).
 		//eprintk("Attempting to acquire\n");
 		//r = -ENOTTY; 
+		if(current->pid  == d->write_pid) return -EDEADLOCK;
 		osp_spin_lock(&d->mutex);
 		unsigned my_ticket = d->ticket_head++;
 		osp_spin_unlock(&d->mutex);
@@ -285,7 +290,11 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 			return -ERESTARTSYS;
 		}
 		osp_spin_lock(&d->mutex);
-		if(filp_writable) d->num_write_locks++;
+		if(filp_writable){
+			if(d->write_pid == current->pid) return -EDEADLK;
+			d->num_write_locks++;
+			d->write_pid = current->pid;
+		}
 		else d->num_read_locks++;
 		filp->f_flags |= F_OSPRD_LOCKED;
 		d->ticket_tail++;
@@ -352,7 +361,7 @@ static void osprd_setup(osprd_info_t *d)
 	d->array_len = INIT_SIZE;	
 	d->num_read_locks = 0;
 	d->num_write_locks = 0;
-	
+	d->write_pid = -1;
 }
 
 
