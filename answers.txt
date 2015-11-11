@@ -14,9 +14,9 @@ Student ID: 804050308
 Email:	russelldeguzman@ucla.edu
 
 # Partner 2
-#Name: David Yang
-#Student ID: 404330995
-#Email: davidyang6us@gmail.com
+Name: David Yang
+Student ID: 404330995
+Email: davidyang6us@gmail.com
 
 
 # Add any other information you'd like us to have below this line.
