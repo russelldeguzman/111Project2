@@ -65,6 +65,8 @@ typedef struct osprd_info {
 	int num_read_locks;
 	int num_write_locks;
 	unsigned * invalid_tickets;
+	pid_t * read_locks;
+	int read_array_len;
 	int num_tickets;
 	int array_len;
 	pid_t write_pid;
@@ -99,6 +101,14 @@ void expandarray(osprd_info_t *d){
 	kfree(d->invalid_tickets);
 	d->invalid_tickets = temp;		
 }
+/*Expand the read lock array*/
+void expandReadArray(osprd_info_t *d){
+	d->read_array_len *=2;
+	pid_t * temp = kmalloc(sizeof(pid_t) * d->read_array_len, GFP_ATOMIC);
+	memcpy(temp,d->read_locks,sizeof(pid_t) * d->read_array_len);
+	kfree(d->read_locks);
+	d->read_locks = temp;
+}
 /*clears a lock and wakes up the queue*/
 void clear(osprd_info_t *d,struct file *filp){
 	osp_spin_lock(&d->mutex);
@@ -112,6 +122,15 @@ void clear(osprd_info_t *d,struct file *filp){
 	filp->f_flags &= !F_OSPRD_LOCKED;
 	osp_spin_unlock(&d->mutex);	
 }
+/*check read locks for the current one*/
+static int checkReads(osprd_info_t *d){
+	int i;
+	int len = d->read_array_len;
+	for(i = 0; i < len; i++){
+		if(current->pid == d->read_locks[i]) return 1;
+	}
+	return 0;
+} 
 /*
  * file2osprd(filp)
  *   Given an open file, check whether that file corresponds to an OSP ramdisk.
@@ -291,11 +310,15 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		}
 		osp_spin_lock(&d->mutex);
 		if(filp_writable){
-			if(d->write_pid == current->pid) return -EDEADLK;
+			if(checkReads(d)) return -EDEADLK;
 			d->num_write_locks++;
 			d->write_pid = current->pid;
 		}
-		else d->num_read_locks++;
+		else{
+			d->read_locks[d->num_read_locks] = current->pid;
+			d->num_read_locks++;
+			if(d->num_read_locks == d->read_array_len)expandReadArray(d);
+		}
 		filp->f_flags |= F_OSPRD_LOCKED;
 		d->ticket_tail++;
 		while(check_invalid(d))
@@ -317,9 +340,17 @@ int osprd_ioctl(struct inode *inode, struct file *filp,
 		//eprintk("Attempting to try acquire\n");
 		//r = -ENOTTY;
 		osp_spin_lock(&d->mutex);
-		if(d->num_write_locks == 0 && (!filp_writable || d->num_read_locks == 0) && d->ticket_tail == d->ticket_head){
-			if(filp_writable) d->num_write_locks++;
-			else d->num_read_locks++;
+		if(filp_writable && d->write_pid == current->pid) return -EDEADLK;
+		else if(d->num_write_locks == 0 && (!filp_writable || d->num_read_locks == 0) && d->ticket_tail == d->ticket_head){
+			if(filp_writable){
+				d->num_write_locks++;
+				d->write_pid = current->pid;
+			}
+			else{
+				d->read_locks[d->num_read_locks] = current->pid;
+				d->num_read_locks++;
+				if(d->num_read_locks == d->read_array_len)expandReadArray(d);
+			}
 			filp->f_flags |= F_OSPRD_LOCKED;			
 		}
 		else r = -EBUSY;
@@ -362,6 +393,8 @@ static void osprd_setup(osprd_info_t *d)
 	d->num_read_locks = 0;
 	d->num_write_locks = 0;
 	d->write_pid = -1;
+	d->read_locks = kmalloc(sizeof(pid_t) * INIT_SIZE,GFP_ATOMIC);
+	d->read_array_len = INIT_SIZE;
 }
 
 
